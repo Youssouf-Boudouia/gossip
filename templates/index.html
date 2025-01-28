@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Search</title>
+    <style>
+      body {
+        display: grid;
+        grid-template-rows: 50px 1fr;
+      }
+      nav {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        max-height: 50px;
+      }
+      main {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 20px;
+        margin: 10px;
+        width: 500px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      .media-thumbnail {
+        max-width: 100%;
+        height: auto;
+        border-radius: 5px;
+      }
+      .tags {
+        color: #555;
+        font-size: 0.9em;
+      }
+      .link {
+        color: blue;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+    </style>
+    <script>
+      function createCard(data) {
+        const card = document.createElement("div");
+        card.className = "card";
+        // Populate card with data
+        card.innerHTML = `
+                <h2>${data.title}</h2>
+                <img src="${
+                  data.media_thumbnail
+                }" alt="Thumbnail" class="media-thumbnail">
+                <p><strong>Author:</strong> ${data.author}</p>
+                <p><strong>Published:</strong> ${new Date(
+                  data.published
+                ).toLocaleString()}</p>
+                <p><strong>Content:</strong> ${data.content}</p>
+                <p><strong>Summary:</strong> ${data.summary}</p>
+                <p><strong>Credit:</strong> ${data.credit}</p>
+                <p><strong>Tags:</strong> <span class="tags">${
+                  data.tags
+                }</span></p>
+                <p class="link" onclick="window.open('${
+                  data.link
+                }', '_blank')">Read more</p>
+            `;
+        return card;
+      }
+      async function performSearch() {
+        const query = document.getElementById("searchInput").value;
+        const response = await fetch(`/search?q=${query}`);
+        const results = await response.json();
+        console.log(results);
+        const main = document.getElementById("main");
+        main.innerHTML = "";
+
+        results.forEach((item) => {
+          main.appendChild(createCard(item));
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <nav>
+      <h1>Search</h1>
+      <input
+        type="text"
+        id="searchInput"
+        oninput="performSearch()"
+        placeholder="Type to search..."
+      />
+    </nav>
+    <main id="main">
+      <ul id="results"></ul>
+    </main>
+  </body>
+</html>

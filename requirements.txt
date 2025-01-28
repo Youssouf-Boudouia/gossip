@@ -1,0 +1,4 @@
+feedparser
+chromadb
+html2text
+flask
