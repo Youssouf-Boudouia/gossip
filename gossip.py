@@ -2,66 +2,78 @@ import feedparser
 import chromadb
 from uuid import uuid4
 import html2text
-from pprint import pprint
 import asyncio
 from flask import Flask, request, jsonify, render_template
-from typing import List
+import itertools
 
-async def fetch_feed(url):
-    Feed = feedparser.parse(url)
-    print(f"url {url} status {Feed.status}")
-    if Feed.status < 400:
-        return Feed.entries
-    return None
- 
-def format_items(items, source):
+def format_item(item:any, source:str):
     h = html2text.HTML2Text()
     h.ignore_links = True
-    metadatas = []
-    documents = []
-    for item in items:
-        metadatas.append({
-            "source": source,
-            "author": item.author,
-            "link": item.link,
-            "credit": item.get("credit", ""),
-            "media_thumbnail": item.get("media_thumbnail", [{"url": ""}])[0]["url"],
-            "published": item.published,
-            "summary": item.summary,
-            "tags": ",".join([tag['term'] for tag in item.get("tags", [])]),
-            "title": item.title,
-            "content": item.content[0].value,
-        })
-        documents.append("\n".join([
-                item.title,
-                item.summary,
-                h.handle(item.content[0].value),
-        ]))
-    uuids = [str(uuid4()) for _ in range(len(documents))]
-    return (metadatas, documents, uuids)
+    metadata = {
+        "source":           source,
+        "title":            item.get("title", ""),
+        "author":           item.get("author", ""),
+        "published":        item.get("published", ""),
+        "summary":          item.get("summary", ""),
+        "content":          item.get("content", [{"value": ""}])[0]["value"],
+        "link":             item.get("link", ""),
+        "media_thumbnail":  item.get("media_thumbnail", [{"url": ""}])[0]["url"],
+        "credit":           item.get("credit", ""),
+        "tags":             ",".join([tag['term'] for tag in item.get("tags", [])]),
+    }
+    document = "\n".join([
+        metadata["title"],
+        metadata["summary"],
+        h.handle(metadata["content"])
+    ])
+    return (metadata, document, str(uuid4()))
 
-def generate_url(domain_name:str):
+def format_items(items:list, source:str):
+    keys = ["metadatas", "documents", "ids"]
+    values = zip(*[format_item(item, source) for item in items])
+    values = map(list, values)
+    return dict(zip(keys, values))
+
+def feed_url_generator(domain_name:str):
     page_number = 0
     while True:
         page_number += 1
         yield f"https://{domain_name}/feed/?paged={page_number}"
 
-async def get_data(sources:List[str], collection):
-    url_generators = {domain:generate_url(domain) for domain in sources}
-    while url_generators:
-        tasks = []
-        for domain, generator in url_generators.items():
-            async def task(url):
-                entries = await fetch_feed(url)
-                if entries:
-                    meta, docs, ids = format_items(entries, domain)
-                    collection.add(ids=ids, documents=docs, metadatas=meta)
-                else:
-                    url_generators.remove(generator)
-            url = next(generator)
-            tasks.append(task(url))
-        await asyncio.gather(*tasks)
+def generate_fetch_task(sources: list[str]):
+    gen_url = {s:feed_url_generator(s) for s in sources}
 
+    async def fetch_url(domain, url):
+        feed = await asyncio.to_thread(feedparser.parse, url)
+        if feed.status < 400:
+            print(f"{feed.status} {url}")
+            return format_items(feed.entries, domain)
+        elif domain in gen_url:
+            del gen_url[domain]
+
+    while gen_url:
+        for domain, url in dict(gen_url).items():
+            yield fetch_url(domain, next(url))
+
+async def get_data(sources: list[str], collection):
+    async def feed(queue:asyncio.Queue):
+        for fetch_task in generate_fetch_task(sources):
+            result = await fetch_task
+            await queue.put(result)
+        await queue.put(None)
+
+    async def store(queue:asyncio.Queue):
+        while True:
+            feed = await queue.get()
+            if feed:
+                print("stored")
+                await asyncio.to_thread(collection.add, **feed)
+            else:
+                queue.task_done()
+                return
+    queue = asyncio.Queue()
+    await asyncio.gather(store(queue), feed(queue))
+       
 def create_app():
     app = Flask(__name__)
 
@@ -76,18 +88,16 @@ def create_app():
             results = collection.query(
                 query_texts=[query],
                 n_results=2)
-            pprint(results)
             return jsonify(results["metadatas"][0])
         return jsonify([])
     
     return app
 
-
 if __name__ == '__main__':
     client = chromadb.PersistentClient(path="./database")
     collection = client.get_or_create_collection(name="gossip")
     sources = ["vsd.fr", "www.public.fr"]
-    asyncio.run(get_data(sources, collection))
-
+    # need to take into account the etag before starting the scrapping
+    # asyncio.run(get_data(sources, collection))
     app = create_app()
     app.run(host='0.0.0.0', port=8000, debug=True)
